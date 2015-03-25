@@ -12,7 +12,7 @@ http://www.basketball-reference.com/boxscores/201410280SAS.html
 Note: These can be accessed by clicking "Box Score" links on the game listing page 
 '''
 # libraries 
-import sys, os, re, sqlite3
+import sys, os, re, sqlite3, gzip
 from urllib import urlopen 
 from bs4 import BeautifulSoup
 
@@ -20,13 +20,19 @@ from bs4 import BeautifulSoup
 cout = sys.stdout.write
 cerr = sys.stderr.write 
 main_page = "http://www.basketball-reference.com/teams/SAS/2015_games.html"
-game_page = "http://www.basketball-reference.com/boxscores/201411110GSW.html"
+player_page = "http://www.basketball-reference.com/teams/SAS/2015.html"
 
-createDb = sqlite3.connect('season_2014-15.db')
+game_page = "http://www.basketball-reference.com/boxscores/201411110GSW.html" #Example 
+
+
+createDb = sqlite3.connect('season2014-15.db')
 queryCurs = createDb.cursor()
 
 
 # functions
+def all_same(items):
+    return all(x == items[0] for x in items) 
+
 # Web Scraping 
 def game_info(main_page):
     '''
@@ -130,6 +136,25 @@ def stat_scrape_advanced(game_page):
         else:
             pass 
     return player_dic, advanced_head_list, team_total_list    
+def get_season_players(player_page):
+    '''
+    Web scrapes player page and returns a list of all players that played that season
+    regardless of whether or not they played for the entirety of the season
+    Useful for the Learning file (see below) 
+    '''
+    webpage = urlopen(player_page).read()
+    soup = BeautifulSoup(webpage)
+    table_grab = soup.find_all("table",{"id":"totals"})
+    table_soup = BeautifulSoup(str(table_grab[0]))
+    html_string = str(table_soup.contents[0])
+    pattern = re.compile('html">(.+)</a>') 
+    p_list = re.findall(pattern,html_string)
+    player_list = [] 
+    for p in p_list:
+        player_list.append(p.replace(" ","_"))
+    return player_list 
+    
+    
 # Databasing 
 
 # Create Table Functions 
@@ -173,7 +198,6 @@ def add_date_tt_basic(table_name,date,gameNum,outcome,mp,fg,fga,fGpct,threeP,thr
                 values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''' % (table_name) 
     queryCurs.execute(string,(date,gameNum,outcome,mp,fg,fga,fGpct,threeP,threePA,threePpct,ft,
                 fta,fTpct,orb,drb,trb,ast,stl,blk,tov,pf,pts))                    
-
 def add_date_tt_advanced(table_name,date,gameNum,outcome,mp,tSpct,eFPpct,threePAr,
                          fTr,oRBpct,dRBpct,tRBpct,aSTpct,sTLpct,bLKpct,toVpct,uSGpct,oRtg,dRtg):
     string = '''INSERT INTO %s (date,gameNum,outcome,mp,tSpct,eFPpct,threePAr,
@@ -181,7 +205,6 @@ def add_date_tt_advanced(table_name,date,gameNum,outcome,mp,tSpct,eFPpct,threePA
                 values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''' % (table_name) 
     queryCurs.execute(string,(date,gameNum,outcome,mp,tSpct,eFPpct,threePAr,
                 fTr,oRBpct,dRBpct,tRBpct,aSTpct,sTLpct,bLKpct,toVpct,uSGpct,oRtg,dRtg)) 
-
 def add_game_basic(table_name,player,mp,fg,fga,fGpct,threeP,threePA,threePpct,ft,fta,
                 fTpct,orb,drb,trb,ast,stl,blk,tov,pf,pts,plusMinus):
     string = '''INSERT INTO %s (player,mp,fg,fga,fGpct,threeP,threePA,threePpct,ft,
@@ -189,7 +212,6 @@ def add_game_basic(table_name,player,mp,fg,fga,fGpct,threeP,threePA,threePpct,ft
                 values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''' % (table_name) 
     queryCurs.execute(string,(player,mp,fg,fga,fGpct,threeP,threePA,threePpct,ft,
                 fta,fTpct,orb,drb,trb,ast,stl,blk,tov,pf,pts,plusMinus)) 
-
 def add_game_advanced(table_name,player,mp,tSpct,eFPpct,threePAr,
                          fTr,oRBpct,dRBpct,tRBpct,aSTpct,sTLpct,bLKpct,toVpct,uSGpct,oRtg,dRtg):
     string = '''INSERT INTO %s (player,mp,tSpct,eFPpct,threePAr,
@@ -285,7 +307,6 @@ def build_db_games_basic():
             cout("Game %s has not happened yet\n" % game)   
     status = r"Number of games successfully added: %d" % success
     cout(status+"\n") 
-
 def build_db_games_advanced():
     game_dic = game_info(main_page)
     success = 0 
@@ -318,10 +339,16 @@ def build_db_games_advanced():
             cout("Game %s has not happened yet\n" % game)   
     status = r"Number of games successfully added: %d" % success
     cout(status+"\n") 
+def build_complete_db():
+    build_db_teamtotals_basic('team_totals_basic')
+    build_db_teamtotals_advanced('team_totals_advanced')
+    build_db_games_basic()
+    build_db_games_advanced() 
 
 # Query Database / Write File Functions 
 def make_tt_file(table_name, outfile):
-    fout = open(outfile,'w')
+    cout("Writing team total file: %s...\n" % outfile)    
+    fout = gzip.open(outfile,'wb')
     command = '''SELECT * FROM %s ''' % table_name
     queryCurs.execute(command)
     col_name_list = [tuple[0] for tuple in queryCurs.description]
@@ -336,9 +363,142 @@ def make_tt_file(table_name, outfile):
         fout.write(line+"\n") 
     fout.close()
     
-        
-            
-def main():
-    pass 
+def make_merged_tt_file(db_name,outfile,write=True):
+    '''
+    Merge team total data from basic and advanced tables
+    Return a dictionary and write an output text file is desired 
+    '''
+    createDb = sqlite3.connect(db_name)
+    queryCurs = createDb.cursor()    
+    total_dic = {} 
+    command1 = '''SELECT * FROM team_totals_basic'''
+    queryCurs.execute(command1)
+    col_name_list1 = [tuple[0] for tuple in queryCurs.description]
+    total_dic['header'] = col_name_list1
+    for tup in queryCurs:
+        s_list = list(tup)
+        stat_list = [] 
+        for l in s_list:
+            stat_list.append(str(l))
+        total_dic[stat_list[1]] = stat_list
+    command2 = '''SELECT * FROM team_totals_advanced'''
+    queryCurs.execute(command2)
+    col_name_list2 = [tuple[0] for tuple in queryCurs.description][4:]
+    total_dic['header'] = total_dic['header'] + col_name_list2
+    for tup in queryCurs:
+        s_list = list(tup)
+        stat_list = [] 
+        for l in s_list:
+            stat_list.append(str(l))
+        total_dic[stat_list[1]] = total_dic[stat_list[1]] + stat_list[4:]        
+    if write == True:
+        fout = gzip.open(outfile,'wb') 
+        head_line = "\t".join(total_dic['header'])+"\n"
+        fout.write(head_line)
+        for game in range(1,83):
+            game = str(game)
+            try:
+                stat_line = "\t".join(total_dic[game])+"\n"
+                fout.write(stat_line)
+            except:
+                cout("Game %s has not happened yet\n" % game)
+        fout.close()
+        return total_dic
+    else:
+        return total_dic       
 
-if (__name__=="__main__"): game_info(main_page)  
+def make_learning_file(db_name,player_page,outfile): 
+    '''
+    Create season file with complete set of game stats 
+    Use for statistical/machine learning 
+    '''
+    player_list = get_season_players(player_page)
+    total_dic = make_merged_tt_file(db_name,"Null",write=False)
+    createDb = sqlite3.connect(db_name)
+    queryCurs = createDb.cursor()  
+    command1 = '''SELECT * FROM game_1_basic'''
+    queryCurs.execute(command1)
+    header_list_basic = [tuple[0] for tuple in queryCurs.description]    
+    header_list_basic = header_list_basic[1:]
+    print len(header_list_basic)
+    command2 = '''SELECT * FROM game_1_advanced'''
+    queryCurs.execute(command2)
+    header_list_advanced = [tuple[0] for tuple in queryCurs.description]  
+    header_list_advanced = header_list_advanced[2:]
+    print len(header_list_advanced)
+    for player in player_list:
+        player_header_list_basic = [player+"_"+head for head in header_list_basic]
+        player_header_list_advanced = [player+"_"+head for head in header_list_advanced]
+        total_dic['header'] = total_dic['header'] + player_header_list_basic + player_header_list_advanced     
+    mp_pattern = re
+    for game in range(1,83):
+        try:
+            for player in player_list:
+                command_basic = '''SELECT * FROM game_%d_basic''' % game 
+                queryCurs.execute(command_basic) 
+                tup_list = [] 
+                for tup in queryCurs:
+                    tup_list.append(tup) 
+                eval_list = []     
+                for tup in tup_list:
+                    plist = list(tup)
+                    guy = plist[0]
+                    if player == guy:
+                        try:
+                            mp = str(plist[1])
+                            min,sec = mp.split(":")
+                            sec = str(float(sec)/60)
+                            junk, sec = sec.split(".")
+                            mp = str(min)+"."+str(sec)
+                            plist[1] = mp 
+                        except:
+                            pass
+                        total_dic[str(game)] = total_dic[str(game)] + plist[1:]
+                        eval_list.append(True)
+                    else:
+                        eval_list.append(False) 
+                if len(eval_list) > 1 and all_same(eval_list):
+                    fillstring = "NA " * 20 
+                    flist = fillstring.strip().split()
+                    total_dic[str(game)] = total_dic[str(game)] + flist
+                command_advanced = '''SELECT * FROM game_%d_advanced''' % game 
+                queryCurs.execute(command_advanced) 
+                tup_list = [] 
+                for tup in queryCurs:
+                    tup_list.append(tup) 
+                eval_list = []     
+                for tup in tup_list:
+                    plist = list(tup)
+                    guy = plist[0]
+                    if player == guy:
+                        total_dic[str(game)] = total_dic[str(game)] + plist[2:]
+                        eval_list.append(True)
+                    else:
+                        eval_list.append(False) 
+                if len(eval_list) > 1 and all_same(eval_list):
+                    fillstring = "NA " * 14 
+                    flist = fillstring.strip().split()
+                    total_dic[str(game)] = total_dic[str(game)] + flist                        
+        except:
+            cout("Game %d has not happended yet\n" % game)                   
+    fout = gzip.open(outfile,'wb')
+    header = "\t".join(total_dic['header'])
+    fout.write(header+"\n")
+    for game in range(1,83):
+        try:
+            glist = [str(x) for x in total_dic[str(game)]]
+            gline = "\t".join(glist)
+            fout.write(gline+"\n")
+        except:
+            cout("Game %d has not happended yet\n" % game) 
+    fout.close()
+    cout("Process Complete\n")                  
+                
+
+if (__name__=="__main__"): build_complete_db() 
+
+
+
+
+
+
